@@ -1,0 +1,14 @@
+[package]
+name = "cat-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bevy = "0.20"
+touchy = { path = "../touchy" }
+
+[profile.dev]
+debug = "line-tables-only"   # backtraces with line numbers, much less to link
+
+[features]
+dev = ["bevy/dynamic_linking"]

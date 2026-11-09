@@ -1,12 +1,12 @@
 //! Physics setup on top of Avian: plugin wiring, wall helpers and model-fitted colliders.
 
 use avian3d::prelude::*;
-use bevy::prelude::*;
+use bevy::{prelude::*, text::FontAtlasSet};
 
 use crate::model::ModelBounds;
 
 /// Debug flag: Whether Avian draws collider outlines.
-const DRAW_COLLIDERS: bool = false;
+const DRAW_COLLIDERS: bool = FontAtlasSet;
 
 /// Plugin that adds Avian physics and fits colliders to models that ask for one.
 pub struct PhysicsPlugin;
@@ -14,25 +14,35 @@ pub struct PhysicsPlugin;
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PhysicsPlugins::default())
-            .add_systems(Update, fit_box_colliders);
+            .add_systems(Update, fit_colliders);
         if DRAW_COLLIDERS {
             app.add_plugins(PhysicsDebugPlugin);
         }
     }
 }
 
-/// Gives the entity an invisible box collider matching its `ModelBounds` once the model loads.
+/// Gives the entity an invisible collider fitted to its `ModelBounds` once the model loads.
+///
+/// An enum so more fitted shapes can be added alongside the box.
 #[derive(Component, Clone, Copy, Debug, Default)]
-pub struct FitBoxCollider;
+pub enum FitCollider {
+    /// Box matching the bounds that turns with the entity.
+    ///
+    /// For characters moved with move-and-slide, turn before the move so the turn is resolved too.
+    #[default]
+    Box,
+}
 
-/// Inserts a box collider fitted to the model bounds of each `FitBoxCollider` entity.
-fn fit_box_colliders(
+/// Inserts a collider fitted to the model bounds of each `FitCollider` entity.
+fn fit_colliders(
     mut commands: Commands,
-    models: Query<(Entity, &ModelBounds), (With<FitBoxCollider>, Without<Collider>)>,
+    models: Query<(Entity, &ModelBounds, &FitCollider), Without<Collider>>,
 ) {
-    for (entity, bounds) in &models {
-        let size = bounds.half_extents * 2.0;
-        let shape = Collider::cuboid(size.x, size.y, size.z);
+    for (entity, bounds, fit) in &models {
+        let half = bounds.half_extents;
+        let shape = match fit {
+            FitCollider::Box => Collider::cuboid(half.x * 2.0, half.y * 2.0, half.z * 2.0),
+        };
         commands
             .entity(entity)
             .insert(Collider::compound(vec![(bounds.center, Quat::IDENTITY, shape)]));

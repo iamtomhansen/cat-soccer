@@ -13,7 +13,7 @@ const STICK_DEADZONE: f32 = 0.05;
 const ACCELERATION_SECONDS: f32 = 0.2;
 /// How quickly the cat turns to face its heading.
 const TURN_RATE: f32 = 12.0;
-/// Speeds below this don't turn the cat, so it keeps its heading as it stops.
+/// Intended speeds below this don't turn the cat, so it keeps its heading as it stops.
 const MIN_TURN_SPEED: f32 = 0.01;
 /// Fraction of `CAT_SPEED` above which an idle cat starts walking.
 const WALK_START_FRACTION: f32 = 0.04;
@@ -42,7 +42,9 @@ pub enum MoveState {
 /// The cat's current movement, read by animation and other systems.
 #[derive(Component, Debug, Default)]
 pub struct CatMotion {
-    /// World-space velocity on the ground plane.
+    /// Velocity the cat is trying to move at, accelerating towards the joystick, before collisions.
+    pub intended_velocity: Vec3,
+    /// Velocity the cat actually moved at last frame, after sliding along walls.
     pub velocity: Vec3,
     /// Current movement state.
     pub state: MoveState,
@@ -72,8 +74,19 @@ pub fn move_cat(
     let max_delta_v = CAT_SPEED / ACCELERATION_SECONDS * time.delta_secs();
 
     for (entity, mut transform, mut motion, collider) in &mut cats {
-        let delta = (target_velocity - motion.velocity).clamp_length_max(max_delta_v);
-        motion.velocity += delta;
+        let delta = (target_velocity - motion.intended_velocity).clamp_length_max(max_delta_v);
+        motion.intended_velocity += delta;
+
+        // Turn towards the input before moving, so move-and-slide's depenetration pass pushes a
+        // turning collider out of walls in the same frame. Facing the input (not the measured
+        // velocity) keeps those pushes from feeding back into the heading, which made it jitter.
+        if motion.intended_velocity.length() > MIN_TURN_SPEED {
+            let target_rot =
+                Transform::default().looking_to(motion.intended_velocity, Vec3::Y).rotation;
+            transform.rotation = transform.rotation.slerp(target_rot, TURN_RATE * time.delta_secs());
+        }
+
+        let start = transform.translation;
 
         // Slide along anything in the way.
         if let Some(collider) = collider {
@@ -81,20 +94,22 @@ pub fn move_cat(
                 collider,
                 transform.translation,
                 transform.rotation,
-                motion.velocity,
+                motion.intended_velocity,
                 time.delta(),
                 &MoveAndSlideConfig::default(),
                 &SpatialQueryFilter::from_excluded_entities([entity]),
                 |_| MoveAndSlideHitResponse::Accept,
             );
-            transform.translation = out.position.with_y(transform.translation.y);
-            // Keep only the velocity that survived the walls.
-            motion.velocity = out.projected_velocity.with_y(0.0);
+            transform.translation = out.position.with_y(start.y);
         } else {
-            transform.translation += motion.velocity * time.delta_secs();
+            transform.translation += motion.intended_velocity * time.delta_secs();
         }
 
-        transform.translation += motion.velocity * time.delta_secs();
+        // Measure what really happened, so animation follows the slide, not the input.
+        // (Move-and-slide's projected velocity flickers between frames at a wall.)
+        if time.delta_secs() > 0.0 {
+            motion.velocity = (transform.translation - start).with_y(0.0) / time.delta_secs();
+        }
 
         let speed = motion.speed();
         motion.state = match motion.state {
@@ -102,11 +117,5 @@ pub fn move_cat(
             MoveState::Walking if speed < WALK_STOP_FRACTION * CAT_SPEED => MoveState::Idle,
             state => state,
         };
-
-        // Smooth rotation towards movement direction
-        if speed > MIN_TURN_SPEED {
-            let target_rot = Transform::default().looking_to(motion.velocity, Vec3::Y).rotation;
-            transform.rotation = transform.rotation.slerp(target_rot, TURN_RATE * time.delta_secs());
-        }
     }
 }

@@ -10,7 +10,7 @@ use movement::{CatMotion, CatMovementPlugin};
 use avian3d::prelude::{CustomPositionIntegration, RigidBody};
 
 use crate::model::{ModelConfig, ModelSize};
-use crate::physics::FitBoxCollider;
+use crate::physics::FitCollider;
 
 /// Path to the cat's glTF model.
 const CAT_MODEL_PATH: &str = "models/cat.glb";
@@ -45,7 +45,7 @@ fn spawn_cat(mut commands: Commands, asset_server: Res<AssetServer>) {
         // Kinematic: Moved by the CatMotion system, not physics.
         RigidBody::Kinematic,
         CustomPositionIntegration,
-        FitBoxCollider,
+        FitCollider::Box,
         ModelConfig::new(
             asset_server.load(GltfAssetLabel::Scene(0).from_asset(CAT_MODEL_PATH)),
             ModelSize::Height(CAT_HEIGHT),

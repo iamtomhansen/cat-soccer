@@ -1,4 +1,4 @@
-//! A plugin to manage the cat's animations.
+//! On-screen touch controls for player input.
 
 use bevy::prelude::*;
 use touchy::prelude::*;
@@ -12,6 +12,7 @@ impl Plugin for UiInputPlugin {
     }
 }
 
+/// Startup system to spawn the floating joystick.
 fn setup_touch_controls(mut commands: Commands, layers: Res<UiLayers>) {
     commands.entity(layers.screen).with_children(|screen| {
         let config = JoystickConfig::new()

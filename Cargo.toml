@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 bevy = "0.20"
+avian3d = "0.8"
 touchy = { path = "../touchy" }
 
 [profile.dev]

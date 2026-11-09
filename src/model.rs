@@ -1,7 +1,11 @@
 //! Handles GLB model loading and scaling to desired dimensions.
 
+use bevy::camera::primitives::{MeshAabb};
+use bevy::math::Affine3A;
 use bevy::prelude::*;
-use bevy::camera::primitives::Aabb;
+
+/// Dimensions smaller than this are treated as zero to avoid dividing by nothing.
+const MIN_DIMENSION: f32 = 0.0001;
 
 /// Plugin for 3D model size normalization and scaling.
 pub struct ModelNormalizePlugin;
@@ -80,58 +84,103 @@ pub enum ModelSize {
 #[component(storage = "SparseSet")]
 pub struct ModelNormalized;
 
+/// Bind-pose bounds of the scaled model in the root's local space, added on normalization.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ModelBounds {
+    /// Centre of the bounds relative to the root.
+    pub center: Vec3,
+    /// Half the size of the bounds along each axis.
+    pub half_extents: Vec3,
+}
+
+
+/// Scales each model root to its `ModelSize` once all of its meshes have loaded.
+///
+/// Bounds come from the mesh assets (bind pose), not the runtime `Aabb`, which glTF skinned
+/// meshes recompute from animated joints every frame.
 fn apply_model_normalization(
     mut commands: Commands,
-    aabb_query: Query<(&Aabb, &ChildOf), Added<Aabb>>,
-    parents: Query<&ChildOf>,
-    mut roots: Query<(Entity, &mut Transform, &ModelConfig), Without<ModelNormalized>>,
+    roots: Query<(Entity, &ModelConfig, &Children), Without<ModelNormalized>>,
+    visuals: Query<(), With<WorldAssetRoot>>,
+    children: Query<&Children>,
+    mut nodes: Query<(&mut Transform, Option<&Mesh3d>, Option<&ChildOf>), Without<ModelConfig>>,
+    meshes: Res<Assets<Mesh>>,
 ) {
-    for (aabb, child_of) in &aabb_query {
-        // Walk up hierarchy to find entity with ModelSize component.
-        let mut current = child_of.parent();
-        let target_root = loop {
-            if roots.contains(current) {
-                break Some(current);
+    for (root_entity, config, root_children) in &roots {
+        let mut min = Vec3::splat(f32::MAX);
+        let mut max = Vec3::splat(f32::MIN);
+        let mut waiting = false;
+
+        let descendants = root_children
+            .iter()
+            .flat_map(|child| std::iter::once(child).chain(children.iter_descendants(child)));
+        for entity in descendants {
+            let Ok((_, Some(mesh3d), _)) = nodes.get(entity) else { continue };
+            let Some(aabb) = meshes.get(mesh3d).and_then(MeshAabb::get_aabb) else {
+                waiting = true;
+                break;
+            };
+            // Place the mesh bounds in the root's local space using the chain of local transforms.
+            let to_root = root_from_entity(entity, root_entity, &nodes);
+            let (center, half) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
+            for corner in 0..8 {
+                let sign = Vec3::new(
+                    if corner & 1 == 0 { -1.0 } else { 1.0 },
+                    if corner & 2 == 0 { -1.0 } else { 1.0 },
+                    if corner & 4 == 0 { -1.0 } else { 1.0 },
+                );
+                let point = to_root.transform_point3(center + half * sign);
+                min = min.min(point);
+                max = max.max(point);
             }
-            if let Ok(next_parent) = parents.get(current) {
-                current = next_parent.parent();
-            } else {
-                break None;
+        }
+        // Nothing to measure until the scene has spawned and its meshes have loaded.
+        if waiting || min.x > max.x {
+            continue;
+        }
+
+        let dimensions = max - min;
+        let uniform_scale = match config.size {
+            ModelSize::Height(target_height) => target_height / dimensions.y.max(MIN_DIMENSION),
+            ModelSize::MaxDimension(target_max) => {
+                target_max / dimensions.max_element().max(MIN_DIMENSION)
+            }
+            ModelSize::FitBox(target_box) => {
+                (target_box / dimensions.max(Vec3::splat(MIN_DIMENSION))).min_element()
             }
         };
 
-        let Some(root_entity) = target_root else { continue };
-
-        if let Ok((_, mut transform, config)) = roots.get_mut(root_entity) {
-            let dimensions = aabb.half_extents.to_vec3() * 2.0;
-
-            let uniform_scale = match config.size {
-                ModelSize::Height(target_height) => {
-                    if dimensions.y > 0.0001 {
-                        target_height / dimensions.y
-                    } else {
-                        1.0
-                    }
-                }
-                ModelSize::MaxDimension(target_max) => {
-                    // Find longest axis
-                    let max_dim = dimensions.x.max(dimensions.y).max(dimensions.z);
-                    if max_dim > 0.0001 {
-                        target_max / max_dim
-                    } else {
-                        1.0
-                    }
-                }
-                ModelSize::FitBox(target_box) => {
-                    let scale_x = target_box.x / dimensions.x.max(0.0001);
-                    let scale_y = target_box.y / dimensions.y.max(0.0001);
-                    let scale_z = target_box.z / dimensions.z.max(0.0001);
-                    scale_x.min(scale_y).min(scale_z)
-                }
-            };
-
-            transform.scale = Vec3::splat(uniform_scale);
-            commands.entity(root_entity).insert(ModelNormalized);
+        let Some(visual) = root_children.iter().find(|child| visuals.contains(*child)) else {
+            continue;
+        };
+        if let Ok((mut visual_transform, _, _)) = nodes.get_mut(visual) {
+            visual_transform.scale = Vec3::splat(uniform_scale);
         }
+        // The visual child's offset is applied before scaling, so measured bounds scale about it.
+        let offset = config.translation_offset;
+        commands.entity(root_entity).insert((
+            ModelNormalized,
+            ModelBounds {
+                center: offset + ((min + max) * 0.5 - offset) * uniform_scale,
+                half_extents: dimensions * 0.5 * uniform_scale,
+            },
+        ));
     }
+}
+
+/// Composes local transforms from `entity` up to (but not including) `root`.
+fn root_from_entity(
+    entity: Entity,
+    root: Entity,
+    nodes: &Query<(&mut Transform, Option<&Mesh3d>, Option<&ChildOf>), Without<ModelConfig>>,
+) -> Affine3A {
+    let mut affine = Affine3A::IDENTITY;
+    let mut current = entity;
+    while current != root {
+        let Ok((local, _, parent)) = nodes.get(current) else { break };
+        affine = local.compute_affine() * affine;
+        let Some(parent) = parent else { break };
+        current = parent.parent();
+    }
+    affine
 }

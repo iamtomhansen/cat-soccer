@@ -1,150 +1,165 @@
+//! Drives the cat's idle/walk blend and random idle fidgets from its movement.
+
 use std::time::Duration;
 
+use bevy::gltf::Gltf;
 use bevy::prelude::*;
-use touchy::prelude::*;
 
-/// Placeholder for now: A plugin to manage the cat's animations.
+use super::movement::{move_cat, CatMotion, MoveState, CAT_SPEED};
+use super::Cat;
+use crate::animation::{AnimationConfig, ModelAnimations};
+use crate::rng::Rng;
+
+/// glTF name of the idle loop.
+const IDLE_CLIP: &str = "Idle";
+/// glTF name of the walk loop.
+const WALK_CLIP: &str = "CatWalk";
+/// Fidget clips layered over the idle, each with the bones (and descendants) it may move.
+const FIDGETS: &[(&str, &[&str])] = &[
+    ("eartwitch.l", &["ear.l"]),
+    ("ear_twitch.r", &["ear.r"]),
+    ("tailswish", &["tail1"]),
+    ("tailtwitch", &["tail3"]),
+];
+/// Seconds to fully blend between idle and walk.
+const BLEND_SECONDS: f32 = 0.25;
+/// Walk clip playback rate at `CAT_SPEED`; slower movement scales it down proportionally.
+const WALK_ANIM_SPEED_AT_TOP: f32 = 2.0;
+/// Slowest playback rate of the walk clip, so legs keep moving while blending out.
+const MIN_WALK_ANIM_SPEED: f32 = 0.1;
+/// Shortest wait between fidgets, in seconds.
+const FIDGET_INTERVAL_MIN: f32 = 3.0;
+/// Longest wait between fidgets, in seconds.
+const FIDGET_INTERVAL_MAX: f32 = 8.0;
+/// Seconds a fidget takes to fade in and out.
+const FIDGET_FADE_SECONDS: f32 = 0.15;
+/// Idle weight needed before a fidget may start.
+const FIDGET_MIN_IDLE_WEIGHT: f32 = 0.9;
+/// Cap on a layer's share of its bones, keeping the weight conversion finite.
+const MAX_LAYER_SHARE: f32 = 0.99;
+
+/// The plugin that sets up and runs the cat's animations.
 pub struct CatAnimationPlugin;
 
 impl Plugin for CatAnimationPlugin {
-    fn build(&self, _app: &mut App) {
-        app.init_resource::<CatAnimationAssets>()
-            .add_systems(Startup, load_cat_animation_graph)
-            .add_systems(Update, (
-                link_animation_player,
-                update_cat_animations,
-            ));
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, (start_base_loops, update_cat_animations.after(move_cat)));
     }
 }
 
-/// The animation graph and nodes for the cat.
-#[derive(Resource)]
-pub struct CatAnimations {
-    pub graph_handle: Handle<AnimationGraph>,
-    pub walk: AnimationNodeIndex,
-    pub idle: AnimationNodeIndex,
-    pub ear_r: AnimationNodeIndex,
-    pub ear_l: AnimationNodeIndex,
-    pub tail_swish: AnimationNodeIndex,
-    pub tail_twitch: AnimationNodeIndex,
+/// Builds the cat's clip list for its model root.
+pub fn cat_animation_config(gltf: Handle<Gltf>) -> AnimationConfig {
+    FIDGETS.iter().fold(
+        AnimationConfig::new(gltf).clip(IDLE_CLIP).clip(WALK_CLIP),
+        |config, (name, bones)| config.masked_clip(name, bones),
+    )
 }
 
-/// Dynamic playback & blend state attached to the logical Cat entity
-#[derive(Component)]
-pub struct CatLocomotion {
-    pub is_walking: bool,
-    pub idle_weight: f32,
-    pub walk_weight: f32,
-    pub twitch_timer: Timer,
+/// Per-cat animation blend and fidget state.
+#[derive(Component, Debug)]
+pub struct CatAnimator {
+    /// Linear 0 (idle) to 1 (walk) blend progress.
+    pub walk_blend: f32,
+    /// Counts down to the next fidget.
+    pub fidget_timer: Timer,
 }
 
-impl Default for CatLocomotion {
+impl Default for CatAnimator {
     fn default() -> Self {
-        Self {
-            is_walking: false,
-            idle_weight: 1.0,
-            walk_weight: 0.0,
-            twitch_timer: Timer::from_seconds(10.0, TimerMode::Repeating),
-        }
+        let first_wait = Duration::from_secs_f32(FIDGET_INTERVAL_MAX);
+        Self { walk_blend: 0.0, fidget_timer: Timer::new(first_wait, TimerMode::Once) }
     }
 }
 
-fn load_cat_animation_graph(
-    mut anims: ResMut<CatAnimationAssets>,
-    mut graphs: ResMut<Assets<AnimationGraph>>,
-    asset_server: Res<AssetServer>,
-) {
-    let mut graph = AnimationGraph::new();
-
-    // Load clips by their GLTF animation index
-    let walk_clip = asset_server.load(GltfAssetLabel::Animation(0).from_asset("models/cat.glb"));
-    let idle_clip = asset_server.load(GltfAssetLabel::Animation(1).from_asset("models/cat.glb"));
-    let ear_r_clip = asset_server.load(GltfAssetLabel::Animation(2).from_asset("models/cat.glb"));
-    let ear_l_clip = asset_server.load(GltfAssetLabel::Animation(3).from_asset("models/cat.glb"));
-    let tail_swish_clip = asset_server.load(GltfAssetLabel::Animation(4).from_asset("models/cat.glb"));
-    let tail_twitch_clip = asset_server.load(GltfAssetLabel::Animation(5).from_asset("models/cat.glb"));
-
-    anims.walk = graph.add_clip(walk_clip, 1.0, graph.root);
-    anims.idle = graph.add_clip(idle_clip, 1.0, graph.root);
-    anims.ear_r = graph.add_clip(ear_r_clip, 1.0, graph.root);
-    anims.ear_l = graph.add_clip(ear_l_clip, 1.0, graph.root);
-    anims.tail_swish = graph.add_clip(tail_swish_clip, 1.0, graph.root);
-    anims.tail_twitch = graph.add_clip(tail_twitch_clip, 1.0, graph.root);
-
-    anims.graph = graphs.add(graph);
-}
-
-/// The AnimationPlayer is used to play animations for a scene. Give it a handle to the
-/// AnimationGraph.
-fn link_animation_player(
-    mut commands: Commands,
-    anims: Res<CatAnimationAssets>,
-    mut players: Query<(Entity, &mut AnimationPlayer), Added<AnimationPlayer>>,
-) {
-    for (entity, mut player) in &mut players {
-        // Link the graph to this player
-        commands.entity(entity).insert(AnimationGraphHandle(anims.graph.clone()));
-
-        // Start both idle and walk; blend using weights
-        player.play(anims.idle).repeat().set_weight(1.0);
-        player.play(anims.walk).repeat().set_weight(0.0);
-    }
-}
-
-/// A system that updates the cat's animations based on its movement and random events.
-fn update_cat_animations(
-    time: Res<Time>,
-    anims: Res<CatAnimationAssets>,
-    mut cats: Query<&mut CatLocomotion, With<Cat>>,
+/// Starts the idle and walk loops whenever a cat's animations are (re)linked.
+fn start_base_loops(
+    cats: Query<&ModelAnimations, (With<Cat>, Changed<ModelAnimations>)>,
     mut players: Query<&mut AnimationPlayer>,
 ) {
-    let Ok(mut loco) = cats.single_mut() else { return };
-    let dt = time.delta_secs();
-
-    // 1. Smoothly interpolate weights (250ms crossfade)
-    let (target_idle, target_walk) = if loco.is_walking {
-        (0.0, 1.0)
-    } else {
-        (1.0, 0.0)
-    };
-
-    loco.idle_weight = move_towards(loco.idle_weight, target_idle, 4.0 * dt);
-    loco.walk_weight = move_towards(loco.walk_weight, target_walk, 4.0 * dt);
-
-    for mut player in &mut players {
-        // Apply blend weights
-        if let Some(idle) = player.animation_mut(anims.idle) {
-            idle.set_weight(loco.idle_weight);
+    for anims in &cats {
+        let Ok(mut player) = players.get_mut(anims.player) else { continue };
+        if let Some(idle) = anims.clip(IDLE_CLIP) {
+            player.play(idle.node).repeat().set_weight(1.0);
         }
-        if let Some(walk) = player.animation_mut(anims.walk) {
-            walk.set_weight(loco.walk_weight);
-        }
-
-        // 2. Ambient fidgets (twitches and swishes)
-        loco.twitch_timer.tick(time.delta());
-        if loco.twitch_timer.just_finished() {
-            let choice = fastrand::u8(0..4);
-            let action_node = match choice {
-                0 => anims.ear_r,
-                1 => anims.ear_l,
-                2 => anims.tail_swish,
-                _ => anims.tail_twitch,
-            };
-
-            // Start plays once from the beginning without clearing the base loops
-            player.start(action_node);
-
-            // Re-arm between 8 and 14 seconds
-            let next_delay = 8.0 + fastrand::f32() * 6.0;
-            loco.twitch_timer.set_duration(Duration::from_secs_f32(next_delay));
+        if let Some(walk) = anims.clip(WALK_CLIP) {
+            player.play(walk.node).repeat().set_weight(0.0);
         }
     }
 }
 
-fn move_towards(current: f32, target: f32, max_step: f32) -> f32 {
-    if (target - current).abs() <= max_step {
-        target
-    } else {
-        current + (target - current).signum() * max_step
+/// Blends idle and walk from movement, scales walk speed, and layers fidgets on top.
+fn update_cat_animations(
+    time: Res<Time>,
+    mut rng: ResMut<Rng>,
+    mut cats: Query<(&CatMotion, &ModelAnimations, &mut CatAnimator), With<Cat>>,
+    mut players: Query<&mut AnimationPlayer>,
+) {
+    for (motion, anims, mut animator) in &mut cats {
+        let Ok(mut player) = players.get_mut(anims.player) else { continue };
+        let (Some(idle), Some(walk)) = (anims.clip(IDLE_CLIP), anims.clip(WALK_CLIP)) else {
+            continue;
+        };
+
+        // Move the blend towards the current movement state.
+        let target = if motion.state == MoveState::Walking { 1.0 } else { 0.0 };
+        let step = time.delta_secs() / BLEND_SECONDS;
+        animator.walk_blend += (target - animator.walk_blend).clamp(-step, step);
+        let walk_weight = smoothstep(animator.walk_blend);
+        let idle_weight = 1.0 - walk_weight;
+
+        // Base weights sum to 1, so a layer's weight maps directly to its share of its bones.
+        if let Some(active) = player.animation_mut(idle.node) {
+            active.set_weight(idle_weight);
+        }
+        if let Some(active) = player.animation_mut(walk.node) {
+            let anim_speed =
+                (motion.speed() / CAT_SPEED * WALK_ANIM_SPEED_AT_TOP).max(MIN_WALK_ANIM_SPEED);
+            active.set_weight(walk_weight).set_speed(anim_speed);
+        }
+
+        // Fade playing fidgets in and out, scaled down as the cat starts walking.
+        let mut fidgeting = false;
+        for (name, _) in FIDGETS {
+            let Some(clip) = anims.clip(name) else { continue };
+            let Some(active) = player.animation_mut(clip.node) else { continue };
+            if active.is_finished() {
+                player.stop(clip.node);
+                continue;
+            }
+            fidgeting = true;
+            let t = active.seek_time();
+            let fade = (t.min(clip.duration - t) / FIDGET_FADE_SECONDS).clamp(0.0, 1.0);
+            active.set_weight(layer_weight(fade * idle_weight));
+        }
+
+        // Start a random fidget when the timer runs out and the cat is resting.
+        animator.fidget_timer.tick(time.delta());
+        if animator.fidget_timer.just_finished() {
+            animator.fidget_timer = random_fidget_timer(&mut rng);
+            if !fidgeting && idle_weight >= FIDGET_MIN_IDLE_WEIGHT {
+                let (name, _) = FIDGETS[rng.index(FIDGETS.len())];
+                if let Some(clip) = anims.clip(name) {
+                    player.start(clip.node).set_weight(0.0);
+                }
+            }
+        }
     }
+}
+
+/// Converts a layer's desired share of its bones into a weight against base weights summing to 1.
+fn layer_weight(share: f32) -> f32 {
+    let share = share.clamp(0.0, MAX_LAYER_SHARE);
+    share / (1.0 - share)
+}
+
+/// Eases a 0 to 1 value in and out.
+fn smoothstep(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// A one-shot timer for a random wait until the next fidget.
+fn random_fidget_timer(rng: &mut Rng) -> Timer {
+    let secs = rng.range_f32(FIDGET_INTERVAL_MIN, FIDGET_INTERVAL_MAX);
+    Timer::new(Duration::from_secs_f32(secs), TimerMode::Once)
 }

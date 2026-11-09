@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use touchy::prelude::*;
 use avian3d::prelude::*;
 use super::Cat;
+use crate::physics::{GameLayer, MoveHit};
 
 /// Top speed of the cat, reached at full joystick deflection.
 pub const CAT_SPEED: f32 = 1.0;
@@ -64,6 +65,7 @@ pub fn move_cat(
     mut cats: Query<(Entity, &mut Transform, &mut CatMotion, Option<&Collider>),
         With<Cat>>,
     move_and_slide: MoveAndSlide,
+    mut hits: MessageWriter<MoveHit>,
 ) {
     let stick = sticks.single().map(|s| s.0.clamp_length_max(1.0)).unwrap_or(Vec2::ZERO);
     let stick = if stick.length() < STICK_DEADZONE { Vec2::ZERO } else { stick };
@@ -90,6 +92,10 @@ pub fn move_cat(
 
         // Slide along anything in the way.
         if let Some(collider) = collider {
+            // The cat walks on the ground plane itself, so it only collides with things on it.
+            let filter = SpatialQueryFilter::from_mask(GameLayer::Default)
+                .with_excluded_entities([entity]);
+            let intended_velocity = motion.intended_velocity;
             let out = move_and_slide.move_and_slide(
                 collider,
                 transform.translation,
@@ -97,8 +103,16 @@ pub fn move_cat(
                 motion.intended_velocity,
                 time.delta(),
                 &MoveAndSlideConfig::default(),
-                &SpatialQueryFilter::from_excluded_entities([entity]),
-                |_| MoveAndSlideHitResponse::Accept,
+                &filter,
+                |hit| {
+                    hits.write(MoveHit {
+                        other: hit.entity,
+                        point: hit.point,
+                        normal: hit.normal.as_vec3(),
+                        velocity: intended_velocity,
+                    });
+                    MoveAndSlideHitResponse::Accept
+                },
             );
             transform.translation = out.position.with_y(start.y);
         } else {

@@ -2,6 +2,7 @@
 
 use bevy::camera::primitives::{MeshAabb};
 use bevy::math::Affine3A;
+use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 
 /// Dimensions smaller than this are treated as zero to avoid dividing by nothing.
@@ -94,19 +95,39 @@ pub struct ModelBounds {
 }
 
 
-/// Scales each model root to its `ModelSize` once all of its meshes have loaded.
+/// Scales each model to its `ModelSize` once its meshes have loaded, and records its `ModelBounds`.
 ///
-/// Bounds come from the mesh assets (bind pose), not the runtime `Aabb`, which glTF skinned
-/// meshes recompute from animated joints every frame.
+/// Works in three steps:
+///   1. Measure: find the box around every mesh in the model, in the root entity's space.
+///   2. Scale: pick one scale factor from `ModelSize` and apply it to the visual child.
+///   3. Record: store the scaled box as `ModelBounds`, which colliders are fitted to.
+/// 
+/// Two complications in measuring the box:
+/// - It measures the mesh assets, which hold the model's rest pose, rather than the `Aabb`
+///   component, because Bevy moves the `Aabb` of an animated (skinned) mesh along with its bones.
+/// - A mesh's vertices normally sit relative to the mesh's own entity, so its box is moved up through
+///   each parent's transform. Skinned meshes are the exception: glTF says their vertices sit relative
+///   to the model's origin, and their entity's transform is ignored. In cat.glb the mesh entity is a
+///   child of an `Armature` raised about half a cat, so counting it lifted the box off the ground.
 fn apply_model_normalization(
     mut commands: Commands,
     roots: Query<(Entity, &ModelConfig, &Children), Without<ModelNormalized>>,
     visuals: Query<(), With<WorldAssetRoot>>,
+    skinned: Query<(), With<SkinnedMesh>>,
     children: Query<&Children>,
     mut nodes: Query<(&mut Transform, Option<&Mesh3d>, Option<&ChildOf>), Without<ModelConfig>>,
     meshes: Res<Assets<Mesh>>,
 ) {
     for (root_entity, config, root_children) in &roots {
+        // The visual child holds the glTF scene, its offset and its scale. Other children
+        // (lights, cameras, effects) are not measured as the model.
+        let Some(visual) = root_children.iter().find(|child| {
+            visuals.contains(*child)
+        }) else {
+            continue;
+        };
+
+        // 1. Measure: grow a box around every mesh, in the root's space, at scale 1.
         let mut min = Vec3::splat(f32::MAX);
         let mut max = Vec3::splat(f32::MIN);
         let mut waiting = false;
@@ -120,8 +141,14 @@ fn apply_model_normalization(
                 waiting = true;
                 break;
             };
-            // Place the mesh bounds in the root's local space using the chain of local transforms.
-            let to_root = root_from_entity(entity, root_entity, &nodes);
+            // Transform that carries this mesh's vertices into the root's space. Skinned vertices
+            // are relative to the model origin (the visual child), so start the chain there.
+            let to_root = if skinned.contains(entity) {
+                root_from_entity(visual, root_entity, &nodes)
+            } else {
+                root_from_entity(entity, root_entity, &nodes)
+            };
+            // Carry over all 8 corners of the mesh's box: a rotated box needs every corner.
             let (center, half) = (Vec3::from(aabb.center), Vec3::from(aabb.half_extents));
             for corner in 0..8 {
                 let sign = Vec3::new(
@@ -139,6 +166,7 @@ fn apply_model_normalization(
             continue;
         }
 
+        // 2. Scale: one uniform factor, so the model keeps its proportions.
         let dimensions = max - min;
         let uniform_scale = match config.size {
             ModelSize::Height(target_height) => target_height / dimensions.y.max(MIN_DIMENSION),
@@ -156,7 +184,10 @@ fn apply_model_normalization(
         if let Ok((mut visual_transform, _, _)) = nodes.get_mut(visual) {
             visual_transform.scale = Vec3::splat(uniform_scale);
         }
-        // The visual child's offset is applied before scaling, so measured bounds scale about it.
+        
+        // 3. Record: the box was measured at scale 1, so scale it too. Scaling the visual child
+        // shrinks everything towards that child's position (the configured offset), so the box
+        // centre moves towards the offset, not towards the root.
         let offset = config.translation_offset;
         commands.entity(root_entity).insert((
             ModelNormalized,
@@ -168,7 +199,8 @@ fn apply_model_normalization(
     }
 }
 
-/// Composes local transforms from `entity` up to (but not including) `root`.
+/// The transform from `entity`'s space to `root`'s space: every local transform from `entity`
+/// up to, but not including, `root`, multiplied together.
 fn root_from_entity(
     entity: Entity,
     root: Entity,

@@ -7,7 +7,7 @@ use bevy::prelude::*;
 
 use animation::{cat_animation_config, CatAnimationPlugin, CatAnimator};
 use movement::{CatMotion, CatMovementPlugin};
-use avian3d::prelude::{CustomPositionIntegration, RigidBody};
+use avian3d::prelude::{CustomPositionIntegration, RigidBody, SleepingDisabled};
 
 use crate::model::{ModelConfig, ModelSize};
 use crate::physics::FitCollider;
@@ -44,6 +44,8 @@ fn spawn_cat(mut commands: Commands, asset_server: Res<AssetServer>) {
         Transform::default(),
         // Kinematic: Moved by the CatMotion system, not physics.
         RigidBody::Kinematic,
+        // Avian doesn't see "velocity" on manual entities, so force cat physics to stay "awake".
+        SleepingDisabled,
         CustomPositionIntegration,
         FitCollider::Box,
         ModelConfig::new(

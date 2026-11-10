@@ -1,12 +1,10 @@
 [package]
-name = "cat-test"
+name = "cat-soccer"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# Only the Bevy parts the game uses, which keeps the web download small. When something stops
-# compiling or rendering after you use a new Bevy type, look up its feature at
-# https://docs.rs/crate/bevy/latest/features and add it here.
+# Only the Bevy parts the game uses, to keep web size small.
 bevy = { version = "0.20", default-features = false, features = [
     # App, assets, logging.
     "std",

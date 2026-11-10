@@ -17,6 +17,7 @@ mod rng;
 mod skybox;
 mod ui;
 
+use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 use touchy::prelude::*;
 
@@ -31,10 +32,29 @@ use rng::RngPlugin;
 use skybox::SkyboxPlugin;
 use ui::UiPlugin;
 
+/// Window title, shown on desktop.
+const WINDOW_TITLE: &str = "Cat soccer";
+/// CSS selector of the `<canvas>` in `wasm/index.html` that the game draws into on the web.
+const WEB_CANVAS: &str = "#bevy";
+
 fn main() {
     App::new()
         // Dependencies.
-        .add_plugins(DefaultPlugins)
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: WINDOW_TITLE.into(),
+                        // Web only: draw into the page's canvas and fill its parent.
+                        canvas: Some(WEB_CANVAS.into()),
+                        fit_canvas_to_parent: true,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                // Don't look for `.meta` files: on a static web host each lookup is a 404.
+                .set(AssetPlugin { meta_check: AssetMetaCheck::Never, ..default() }),
+        )
         .add_plugins(TouchyPlugins)
         
         // Crate plugins.

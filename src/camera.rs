@@ -3,6 +3,9 @@
 use bevy::prelude::*;
 use crate::cat::Cat;
 
+/// The offset of the game camera that follows the cat.
+const CAMERA_OFFSET: Vec3 = Vec3::new(0.0, 1.0, 2.0);
+
 /// The plugin that sets up and runs the camera.
 pub struct CameraPlugin;
 
@@ -26,7 +29,7 @@ pub struct FollowCamera {
 impl Default for FollowCamera {
     fn default() -> Self {
         Self {
-            offset: Vec3::new(0.0, 1.0, 3.0),
+            offset: CAMERA_OFFSET,
             smooth_speed: 6.0,
         }
     }
@@ -36,7 +39,8 @@ impl Default for FollowCamera {
 fn setup_camera(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.0, 2.0, 4.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(CAMERA_OFFSET.x, CAMERA_OFFSET.y, CAMERA_OFFSET.z)
+            .looking_at(Vec3::ZERO, Vec3::Y),
         FollowCamera::default(),
     ));
 }

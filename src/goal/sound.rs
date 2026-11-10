@@ -16,7 +16,7 @@ const CHIME_NOTE: Synth = Synth {
     brightness: 0.0,
     decay: 0.3,
     delay: 0.0,
-    volume: 0.00,
+    volume: 0.1,
     seed: 0,
 };
 /// Notes of the chime in semitones above the root: a rising major arpeggio up to the octave.

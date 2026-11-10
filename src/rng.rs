@@ -1,8 +1,7 @@
 //! A tiny xorshift random number generator for gameplay randomness (not for security).
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use bevy::prelude::*;
+use web_time::{SystemTime, UNIX_EPOCH};
 
 /// Seed used when the system clock is unavailable; any non-zero value works.
 const FALLBACK_SEED: u64 = 0x9E37_79B9_7F4A_7C15;

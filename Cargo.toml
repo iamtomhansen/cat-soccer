@@ -4,9 +4,69 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.20"
-avian3d = "0.8"
-touchy = { path = "../touchy" }
+# Only the Bevy parts the game uses, which keeps the web download small. When something stops
+# compiling or rendering after you use a new Bevy type, look up its feature at
+# https://docs.rs/crate/bevy/latest/features and add it here.
+bevy = { version = "0.20", default-features = false, features = [
+    # App, assets, logging.
+    "std",
+    "async_executor",
+    "multi_threaded",
+    "bevy_asset",
+    "bevy_log",
+    "reflect_auto_register",        # glTF scenes need their component types registered
+    # Window and input. "touch" lets phones and tablets drive the joystick.
+    "bevy_winit",
+    "bevy_window",
+    "webgl2",
+    "x11",
+    "wayland",
+    "keyboard",
+    "mouse",
+    "touch",
+    # 3D rendering.
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_pbr",
+    "bevy_light",
+    "bevy_camera",
+    "bevy_mesh",
+    "bevy_mikktspace",              # tangents for the ball's normal map
+    "bevy_image",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_color",
+    "png",
+    "tonemapping_luts",             # the default camera tonemapping needs these
+    "zstd_rust",                    # decompresses the tonemapping tables
+    # glTF models and their animations.
+    "bevy_gltf",
+    "bevy_world_serialization",
+    "bevy_animation",
+    "gltf_animation",
+    # UI: on-screen joystick, welcome card, FPS overlay.
+    "bevy_ui",
+    "bevy_ui_render",
+    "bevy_text",
+    "default_font",
+    "bevy_picking",
+    "ui_picking",
+    "bevy_input_focus",
+    "bevy_gizmos",
+    # Sound (procedural synth only, so no file formats).
+    "bevy_audio",
+] }
+# Only the Avian parts the game uses; "debug-plugin" keeps DRAW_COLLIDERS working.
+avian3d = { version = "0.8", default-features = false, features = [
+    "3d",
+    "parry-f32",
+    "parallel",
+    "debug-plugin",
+] }
+# Personal UI crate
+touchy = { git = "https://github.com/iamtomhansen/touchy", rev = "49c1ea2" }
+# std's SystemTime panics in the browser; web-time is std's on native and works on the web.
+web-time = "1"
 
 [profile.dev]
 debug = "line-tables-only"   # backtraces with line numbers, much less to link
@@ -15,6 +75,14 @@ opt-level = 1                # light optimisation for dev; still quick enough to
 # Build Bevy, Avian, wgpu as fully optimised. Huge FPS gains at the cost of a slow first build.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Web build: optimised for a small download. Used by CI with `--profile web-release`.
+[profile.web-release]
+inherits = "release"
+opt-level = "z"              # smallest code: about 40% smaller wasm than "s" here
+lto = "thin"                 # full LTO runs out of memory on a 16 GB CI runner
+codegen-units = 1
+strip = "debuginfo"
 
 [features]
 dev = ["bevy/dynamic_linking"]

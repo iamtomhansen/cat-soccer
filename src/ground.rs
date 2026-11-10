@@ -22,8 +22,8 @@ use tint::tint_vertices;
 const TEXTURE_REPEATS: f32 = 6.0;
 /// Cuts across the ground plane in each direction, giving the vertices to tint.
 const GROUND_SUBDIVISIONS: u32 = 31;
-/// Whether the texture starts with its mipmaps on (M toggles).
-const MIPMAPS_ON_START: bool = true;
+/// Whether the texture blurs with mipmaps.
+const WITH_MIPMAPS: bool = true;
 /// Most samples the GPU takes along a stretched texture footprint; 1 turns anisotropic filtering off.
 const ANISOTROPY: u16 = 16;
 /// Ground roughness: 1 is fully matte, which suits grass.
@@ -36,6 +36,10 @@ const BLADE_COUNT: usize = 1_000;
 const BLADES_ON_START: bool = true;
 /// Whether blades cast shadows. Each shadow-casting blade is drawn again into the shadow map.
 const BLADES_CAST_SHADOWS: bool = false;
+/// Depth of the soil block under the grass.
+const SOIL_DEPTH: f32 = 0.05;
+/// Gap between the grass plane and the soil block to avoid Z-fighting.
+const SOIL_GAP: f32 = 0.0001;
 
 /// Plugin that spawns the textured ground and grass blades, with keys to compare techniques.
 pub struct GroundPlugin;
@@ -69,11 +73,12 @@ fn spawn_ground(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
 ) {
+    // Spawn ground plane with grass texture.
     let with_mipmaps = images.add(grass_image(true, ANISOTROPY));
     let without_mipmaps = images.add(grass_image(false, ANISOTROPY));
     let material = materials.add(StandardMaterial {
         base_color_texture: Some(
-            if MIPMAPS_ON_START { with_mipmaps.clone() } else { without_mipmaps.clone() },
+            if WITH_MIPMAPS { with_mipmaps.clone() } else { without_mipmaps.clone() },
         ),
         perceptual_roughness: GROUND_ROUGHNESS,
         reflectance: GROUND_REFLECTANCE,
@@ -92,6 +97,7 @@ fn spawn_ground(
     ));
     commands.insert_resource(GroundTextures { material, with_mipmaps, without_mipmaps });
 
+    // Grass blades as a single mesh.
     if BLADE_COUNT == 0 {
         return;
     }
@@ -116,4 +122,18 @@ fn spawn_ground(
     if !BLADES_CAST_SHADOWS {
         blades.insert(NotShadowCaster);
     }
+
+    // Soil block for depth.
+    let soil_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.2, 0.1, 0.0),
+        perceptual_roughness: GROUND_ROUGHNESS,
+        reflectance: GROUND_REFLECTANCE,
+        ..default()
+    });
+    commands.spawn((
+        Name::new("Soil"),
+        Mesh3d(meshes.add(Cuboid::new(GROUND_SIZE, SOIL_DEPTH, GROUND_SIZE))),
+        MeshMaterial3d(soil_material.clone()),
+        Transform::from_translation(Vec3::new(0.0, -SOIL_DEPTH / 2.0 - SOIL_GAP, 0.0)),
+    ));
 }

@@ -1,10 +1,16 @@
 //! A cat that walks around a ground plane, driven by an on-screen joystick.
 
+#![allow(dead_code)]
+
 mod animation;
 mod arena;
+mod audio;
 mod ball;
 mod camera;
 mod cat;
+mod diagnostics;
+mod goal;
+mod ground;
 mod model;
 mod physics;
 mod rng;
@@ -16,6 +22,7 @@ use touchy::prelude::*;
 
 use animation::ModelAnimationPlugin;
 use arena::ArenaPlugin;
+use audio::SoundPlugin;
 use ball::BallPlugin;
 use camera::CameraPlugin;
 use cat::CatPlugin;
@@ -36,11 +43,15 @@ fn main() {
             BallPlugin,
             CameraPlugin,
             CatPlugin,
+            diagnostics::DiagnosticsOverlayPlugin,
+            goal::GoalPlugin,
+            ground::GroundPlugin,
             ModelAnimationPlugin,
             ModelNormalizePlugin,
             physics::PhysicsPlugin,
             RngPlugin,
             SkyboxPlugin,
+            SoundPlugin,
             UiPlugin,
         ))
         

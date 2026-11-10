@@ -2,15 +2,17 @@
 
 pub mod animation;
 pub mod movement;
+pub mod sound;
 
 use bevy::prelude::*;
 
 use animation::{cat_animation_config, CatAnimationPlugin, CatAnimator};
 use movement::{CatMotion, CatMovementPlugin};
-use avian3d::prelude::{CustomPositionIntegration, RigidBody, SleepingDisabled};
+use avian3d::prelude::{CustomPositionIntegration, NoTransformEasing, RigidBody, SleepingDisabled};
 
 use crate::model::{ModelConfig, ModelSize};
 use crate::physics::FitCollider;
+use sound::CatSoundPlugin;
 
 /// Path to the cat's glTF model.
 const CAT_MODEL_PATH: &str = "models/cat.glb";
@@ -32,6 +34,7 @@ impl Plugin for CatPlugin {
         app.add_plugins((
             CatMovementPlugin,
             CatAnimationPlugin,
+            CatSoundPlugin,
         ))
             .add_systems(Startup, spawn_cat);
     }
@@ -47,6 +50,8 @@ fn spawn_cat(mut commands: Commands, asset_server: Res<AssetServer>) {
         // Avian doesn't see "velocity" on manual entities, so force cat physics to stay "awake".
         SleepingDisabled,
         CustomPositionIntegration,
+        // Moved every frame in Update, not in physics steps, so don't interpolate.
+        NoTransformEasing,
         FitCollider::Box,
         ModelConfig::new(
             asset_server.load(GltfAssetLabel::Scene(0).from_asset(CAT_MODEL_PATH)),

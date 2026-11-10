@@ -4,10 +4,10 @@ use bevy::prelude::*;
 use touchy::prelude::*;
 
 const WELCOME_WIDTH: f32 = 400.0;
-const WELCOME_TITLE: &str = "Cat Sandbox";
+const WELCOME_TITLE: &str = "Meow";
 const WELCOME_BODY: &[&str] = &[
-    "Welcome to the physics cat demo.",
-    "Use the virtual joystick to explore.",
+    "Cat soccer physics demo!",
+    "Press and hold for virtual joystick.",
 ];
 
 /// The welcome card that is shown at the start of the game.

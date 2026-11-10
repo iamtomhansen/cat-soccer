@@ -13,7 +13,7 @@ use crate::rng::Rng;
 /// glTF name of the idle loop.
 const IDLE_CLIP: &str = "Idle";
 /// glTF name of the walk loop.
-const WALK_CLIP: &str = "CatWalk";
+pub const WALK_CLIP: &str = "CatWalk";
 /// Fidget clips layered over the idle, each with the bones (and descendants) it may move.
 const FIDGETS: &[(&str, &[&str])] = &[
     ("eartwitch.l", &["ear.l"]),

@@ -9,7 +9,8 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup_camera)
-            .add_systems(PostUpdate, camera_follow);
+            // Before propagation, so the camera's move shows up this frame rather than the next.
+            .add_systems(PostUpdate, camera_follow.before(TransformSystems::Propagate));
     }
 }
 
@@ -49,11 +50,8 @@ fn camera_follow(
     let Ok(cat_tf) = cats.single() else { return; };
     for (mut cam_tf, follow) in &mut cameras {
         let target_pos = cat_tf.translation + follow.offset;
-        // Smooth exponential dampening
-        cam_tf.translation = cam_tf.translation.lerp(
-            target_pos,
-            follow.smooth_speed * time.delta_secs(),
-        );
+        // Exponential smoothing that behaves the same at any frame rate.
+        cam_tf.translation.smooth_nudge(&target_pos, follow.smooth_speed, time.delta_secs());
         // Look slightly above the cat's feet
         cam_tf.look_at(cat_tf.translation + Vec3::Y * 0.5, Vec3::Y);
     }

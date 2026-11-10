@@ -10,6 +10,11 @@ touchy = { path = "../touchy" }
 
 [profile.dev]
 debug = "line-tables-only"   # backtraces with line numbers, much less to link
+opt-level = 1                # light optimisation for dev; still quick enough to rebuild
+
+# Build Bevy, Avian, wgpu as fully optimised. Huge FPS gains at the cost of a slow first build.
+[profile.dev.package."*"]
+opt-level = 3
 
 [features]
 dev = ["bevy/dynamic_linking"]
